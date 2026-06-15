@@ -7,3 +7,6 @@ plotly
 pandas-ta
 Pillow
 reportlab
+spacy==3.7.2
+statsmodels==0.14.1
+

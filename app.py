@@ -779,6 +779,112 @@ for i, ticker in enumerate(selected_tickers):
                     p_emoji = "🟢" if p_score > 0.1 else "🔴" if p_score < -0.1 else "🟡"
                     st.markdown(f"{p_emoji} **[{item['title']}]({item['link']})**")
                     st.caption(f"Source: {item['publisher']} | Score: {p_score:.2f}")
+            
+            with st.expander("🔬 Named Entity Recognition (NER) on News", expanded=False):
+                if analyzed_news:
+                    try:
+                        import spacy
+                        try:
+                            nlp = spacy.load("en_core_web_sm")
+                        except OSError:
+                            import subprocess
+                            import sys
+                            subprocess.run([sys.executable, "-m", "spacy", "download", "en_core_web_sm"], capture_output=True)
+                            nlp = spacy.load("en_core_web_sm")
+                        
+                        entities = {"ORG": [], "GPE": [], "PERSON": []}
+                        for item in analyzed_news:
+                            doc = nlp(item["title"])
+                            for ent in doc.ents:
+                                if ent.label_ in entities:
+                                    entities[ent.label_].append(ent.text)
+                        
+                        ner_col1, ner_col2, ner_col3 = st.columns(3)
+                        with ner_col1:
+                            st.markdown("**Organizations (ORG)**")
+                            orgs = sorted(list(set(entities["ORG"])))[:10]
+                            for org in orgs:
+                                st.write(f"🏢 {org}")
+                            if not orgs: st.caption("No organizations found")
+                        with ner_col2:
+                            st.markdown("**Locations (GPE)**")
+                            gpes = sorted(list(set(entities["GPE"])))[:10]
+                            for gpe in gpes:
+                                st.write(f"📍 {gpe}")
+                            if not gpes: st.caption("No locations found")
+                        with ner_col3:
+                            st.markdown("**People (PERSON)**")
+                            persons = sorted(list(set(entities["PERSON"])))[:10]
+                            for person in persons:
+                                st.write(f"👤 {person}")
+                            if not persons: st.caption("No people found")
+                    except Exception as e:
+                        st.info("Entities (Fallback Noun Phrases):")
+                        phrases = []
+                        for item in analyzed_news:
+                            phrases.extend(TextBlob(item["title"]).noun_phrases)
+                        phrases = sorted(list(set(phrases)))[:15]
+                        for phrase in phrases:
+                            st.write(f"🔑 {phrase}")
+                else:
+                    st.write("No news articles available to analyze.")
+            
+            with st.expander("📊 Granger Causality Test", expanded=False):
+                if not hist.empty and analyzed_news:
+                    try:
+                        from statsmodels.tsa.stattools import grangercausalitytests
+                        
+                        daily_sent = {}
+                        for item in news:
+                            time_epoch = item.get('providerPublishTime', 0)
+                            if time_epoch:
+                                date_str = datetime.fromtimestamp(time_epoch).strftime('%Y-%m-%d')
+                                daily_sent.setdefault(date_str, []).append(TextBlob(item.get('title', '')).sentiment.polarity)
+                        
+                        daily_avg_sent = {d: sum(p)/len(p) for d, p in daily_sent.items()}
+                        
+                        aligned_data = pd.DataFrame(index=hist.index)
+                        aligned_data['price'] = hist['Close']
+                        aligned_data['sentiment'] = aligned_data.index.map(lambda d: daily_avg_sent.get(d.strftime('%Y-%m-%d'), 0.0))
+                        
+                        aligned_data['sentiment'] = aligned_data['sentiment'].replace(0, np.nan).ffill().fillna(0.0)
+                        
+                        aligned_data['price_diff'] = aligned_data['price'].diff().dropna()
+                        aligned_data['sentiment_diff'] = aligned_data['sentiment'].diff().dropna()
+                        aligned_data = aligned_data.dropna()
+                        
+                        if len(aligned_data) > 10:
+                            test_df = aligned_data[['price_diff', 'sentiment_diff']]
+                            max_lag = min(5, len(test_df) // 3)
+                            
+                            if max_lag > 0:
+                                gc_res = grangercausalitytests(test_df, max_lag=max_lag, verbose=False)
+                                
+                                p_values = []
+                                for lag in range(1, max_lag + 1):
+                                    p_val = gc_res[lag][0]['ssr_chi2test'][1]
+                                    p_values.append((lag, p_val))
+                                
+                                min_lag, min_p = min(p_values, key=lambda x: x[1])
+                                
+                                st.write(f"**Causality Results (Max Lag: {max_lag} days)**")
+                                if min_p < 0.05:
+                                    st.success(f"✅ **Significant Causality Detected!** Sentiment statistically leads price at a lag of **{min_lag} days** (p-value: **{min_p:.4f}**).")
+                                else:
+                                    st.info(f"❌ **No Causal Relationship Detected.** (Minimum p-value: **{min_p:.4f}** at lag {min_lag} days, threshold: 0.05).")
+                                
+                                st.dataframe(pd.DataFrame([
+                                    {"Lag (Days)": lag, "p-value": f"{p:.4f}", "Significant": "Yes" if p < 0.05 else "No"}
+                                    for lag, p in p_values
+                                ]), use_container_width=True, hide_index=True)
+                            else:
+                                st.warning("Not enough variance or data points to compute lags.")
+                        else:
+                            st.warning("Need more historical data overlap to perform Granger causality test.")
+                    except Exception as e:
+                        st.error(f"Error computing Granger causality: {e}")
+                else:
+                    st.write("No price or news data available for causality test.")
 
         # Price Chart with Technical Indicators
         st.subheader("Price Chart & Technical Analysis")
