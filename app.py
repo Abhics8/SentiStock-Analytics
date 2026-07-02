@@ -94,6 +94,15 @@ def format_large_number(num):
     if num >= 1_000_000: return f"${num/1_000_000:.2f}M"
     return f"${num:.2f}"
 
+def as_number(value, fallback=0.0):
+    """Return a numeric quote value, or a fallback when providers return null data."""
+    try:
+        if value is None:
+            return fallback
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
 def apply_scenario(base_sentiment, scenario):
     """Apply scenario adjustments to sentiment"""
     scenarios = {
@@ -175,7 +184,7 @@ def generate_pdf_report(ticker, info, hist, news, analyzed_news, recommendation,
     
     # Executive Summary
     story.append(Paragraph("Executive Summary", styles['Heading2']))
-    current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
+    current_price = as_number(info.get('currentPrice') or info.get('regularMarketPrice'))
     summary_data = [
         ['Recommendation', recommendation],
         ['Current Price', f"${current_price:.2f}"],
@@ -490,8 +499,8 @@ if len(selected_tickers) > 1:
     for idx, ticker in enumerate(selected_tickers):
         stock = data[ticker]
         info = stock.info
-        current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
-        previous_close = info.get('previousClose', current_price)
+        current_price = as_number(info.get('currentPrice') or info.get('regularMarketPrice'))
+        previous_close = as_number(info.get('previousClose'), current_price)
         delta = current_price - previous_close
         delta_percent = (delta / previous_close) * 100 if previous_close else 0
         
@@ -587,8 +596,8 @@ for i, ticker in enumerate(selected_tickers):
         
         # Fundamentals
         col1, col2, col3, col4 = st.columns(4)
-        current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
-        previous_close = info.get('previousClose', current_price)
+        current_price = as_number(info.get('currentPrice') or info.get('regularMarketPrice'))
+        previous_close = as_number(info.get('previousClose'), current_price)
         beta = info.get('beta', 1.0)
         
         with col1: st.metric("Current Price", f"${current_price:.2f}")
@@ -642,8 +651,12 @@ for i, ticker in enumerate(selected_tickers):
             recommendation = "HOLD"
 
         # Calculate target price and risk metrics
-        target_price = current_price * (1 + adjusted_sentiment * 0.3)  # 30% sentiment weight
-        upside_percent = ((target_price - current_price) / current_price) * 100
+        if current_price > 0:
+            target_price = current_price * (1 + adjusted_sentiment * 0.3)  # 30% sentiment weight
+            upside_percent = ((target_price - current_price) / current_price) * 100
+        else:
+            target_price = 0.0
+            upside_percent = 0.0
         
         # Risk rating based on beta
         if beta < 0.8:
